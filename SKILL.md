@@ -83,10 +83,26 @@ flowchart TD
    * 通过 Windows 任务计划程序 (`schtasks`) 在前台用户会话中启动，确保前台最大化显示窗口供用户扫码。
    * 参考启动脚本：[launch_browser.cmd](./scripts/launch_browser.cmd)。
    ```cmd
-   "D:\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --remote-allow-origins=* --user-data-dir="D:\chrome_debug_profile" --start-maximized "https://i.chaoxing.com"
+   "D:\Chrome\Application\chrome.exe" ^
+     --remote-debugging-port=9222 ^
+     --remote-allow-origins=* ^
+     --user-data-dir="D:\chrome_debug_profile" ^
+     --start-maximized ^
+     --disable-background-timer-throttling ^
+     --disable-backgrounding-occluded-windows ^
+     --disable-renderer-backgrounding ^
+     --disable-features=CalculateNativeWinOcclusion ^
+     --autoplay-policy=no-user-gesture-required ^
+     "https://i.chaoxing.com"
    ```
+   > **⚠️ 末尾 5 个 `--disable-*` / `--autoplay-*` 参数不能省**：窗口一旦最小化或**被其他窗口完全遮住**，
+   > Chrome 的遮挡检测（`CalculateNativeWinOcclusion`）会把页面判定为 `hidden`，定时器与渲染被节流，
+   > 播放速度会从 1.0x 掉到 **约 0.3x**（实测：231 秒墙钟只推进 69 秒视频，期间出现 90 秒级长暂停）。
 3. **连接验证**：
    * 访问 `http://127.0.0.1:9222/json/version` 确认端口连通。
+   * 用 `document.visibilityState` 检查是否被节流：返回 `visible` 才正常，`hidden` 说明窗口被遮挡/最小化。
+   * 若窗口已被最小化，可用 CDP 恢复：`Browser.getWindowForTarget` 取 windowId →
+     `Browser.setWindowBounds` 设 `windowState: "normal"`（仅恢复窗口还不够，标签页还需 `Page.bringToFront`）。
 
 ---
 
@@ -226,4 +242,6 @@ if (nc && nc.offsetParent !== null) nc.click();
 | **倍速总被改回 1x** | 播放器风控周期性重置 `playbackRate` | 默认 1.0 播放，不强推 2x |
 | **ElementHandle.click 假死** | 跨域/跨层 iframe 坐标计算死锁 | 使用 `evaluate(() => el.click())` 或直接调用 `video.play()` |
 | **鼠标移开/切窗口后视频暂停** | 心跳上报与失焦导致 `paused` | 每 3 秒巡检唤回 `play()`；长暂停（≤70s）属正常，勿切章 |
+| **最小化 / 被遮挡后播放变极慢（约 0.3x）** | Chrome 遮挡检测把页面判为 `hidden`，定时器与渲染被节流 | 启动时加 `--disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=CalculateNativeWinOcclusion`；或保持窗口可见（分屏） |
+| **想确认是否被节流** | 无直观信号 | 读 `document.visibilityState`：`visible` 正常，`hidden` 说明窗口被遮挡/最小化 |
 

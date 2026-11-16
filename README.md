@@ -101,8 +101,17 @@ Chrome 120+ 不允许在默认 `User Data` 目录开调试端口，必须用独�
   --remote-debugging-port=9222 ^
   --remote-allow-origins=* ^
   --user-data-dir="D:\chrome_debug_profile" ^
-  --start-maximized "https://i.chaoxing.com"
+  --start-maximized ^
+  --disable-background-timer-throttling ^
+  --disable-backgrounding-occluded-windows ^
+  --disable-renderer-backgrounding ^
+  --disable-features=CalculateNativeWinOcclusion ^
+  --autoplay-policy=no-user-gesture-required ^
+  "https://i.chaoxing.com"
 ```
+
+> 最后 5 个参数别省。窗口一最小化或被别的窗口完全遮住，Chrome 会把页面判为 `hidden` 并节流，
+> 播放速度会从 1.0x 掉到 **0.3x**（实测 231 秒墙钟只推进 69 秒视频）。详见下方坑位 #11。
 
 验证：浏览器访问 <http://127.0.0.1:9222/json/version> 能返回 JSON 即成功。
 （参考脚本：`scripts/launch_browser.cmd`）
@@ -172,6 +181,8 @@ chaoxing-auto-study/
 | 8 | 已完成视频被重播一遍 | 只判断目录 `icon_Completed`，没判卡片级 | 卡片级 `.ans-job-finished` 也必须跳过 |
 | 9 | 长视频被误杀 | 单视频超时写死 35 分钟 | 按时长动态算：`max(40min, 时长 + 15min)` |
 | 10 | CDP 注入的守卫没生效 | 隔离世界（isolated world）执行，断开连接即销毁 | 从顶层同源主世界穿透注入 |
+| 11 | 最小化 / 被遮挡后播放变得极慢 | Chrome 的遮挡检测（`CalculateNativeWinOcclusion`）把页面判为 `hidden`，定时器与渲染被节流 | 启动加 4 个 `--disable-*` 参数；或让窗口保持可见（分屏而不是最小化） |
+| 12 | 不知道有没有被节流 | 没有直观信号 | 读 `document.visibilityState`：`visible` 正常，`hidden` 说明被遮挡 |
 
 ---
 
@@ -196,6 +207,12 @@ CDP 部分完全跨平台，只有 `keep_awake.ps1` 是 Windows 专用，可换 
 ---
 
 ## 更新日志
+
+### v1.1.1
+- 启动参数补齐 5 个反节流开关，解决**最小化或窗口被遮挡时播放掉到 0.3x** 的问题
+- 新增排查手段：读 `document.visibilityState` 判断是否被节流
+- 新增 CDP 恢复窗口的方法（`Browser.setWindowBounds` + `Page.bringToFront`）
+- 排错表补充 2 条（遮挡节流、如何确认节流）
 
 ### v1.1.0
 - 新增 `scripts/auto_loop_cdp.py`：参数化单进程全自动循环，合并"播放→心跳→校验→推进→跳过"全链路
