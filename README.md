@@ -161,6 +161,7 @@ chaoxing-auto-study/
 │   ├── live_watch.py             # 直播回放看护：静音 + 暂停唤回 + 进度日志
 │   ├── pdf_finish.py             # 阅读(PDF)任务点：跨域阅览器滚到底
 │   ├── pdf_scroll.js             # 上者的裸 JS 版本，便于 CDP 单步调试
+│   ├── page_jump.py              # 章节测验拦截时强制跳章（改写 chapterId）
 │   ├── keep_awake.ps1            # 防熄屏
 │   └── launch_browser.cmd        # 带调试端口启动浏览器
 └── references/
@@ -174,7 +175,7 @@ chaoxing-auto-study/
 | 视频 | `ananas/modules/video` | `.ans-job-finished` | ✅ 全自动 |
 | 课件 / PDF | `ananas/modules/document` / `pdf` | 同上（需真实滚动） | ✅ 跨域滚到底 |
 | 直播回放 | `ananas/modules/live` | 观看时长 ≥ 90%（不可快进） | ✅ 接力 + 看护 |
-| 章节测验 / 作业 | `modules/work` | — | ⏭ 纯刷课模式跳过 |
+| 章节测验 / 作业 | `modules/work` | — | ⏭ 纯刷课模式跳过（会拦住"下一节"，需强制跳章） |
 
 ---
 
@@ -200,6 +201,8 @@ chaoxing-auto-study/
 | 14 | 脚本一启动就 `UnboundLocalError: SPEED` | 函数内后面对 `SPEED` 有回落赋值 → 被当成局部变量 | 首行加 `global SPEED` |
 | 15 | "倍速回落 1x"完全不生效 | 扫描表达式在 import 期 `.replace()` 把倍速**固化**进 JS | 改成每轮现拼 `scan_expr()` |
 | 16 | 长任务跑一会儿就消失，日志只剩一行启动标记 | `nohup ... &` / 父进程 `Popen` 起的进程随会话结束被连带杀掉 | 用外部托管的常驻方式直接跑脚本本体，别套"启动器" |
+| 17 | 某章 `type=other`（isrc 是 `modules/pdf`），点"下一节"原地打转 | 章节里除视频还有"本章PPT"阅读卡片，被当成未知类型 | 识别 `modules/pdf`，对 `pan-yz` 跨域帧逐帧滚到底，变绿再推进 |
+| 18 | 章节测验没答，点"下一节"完全没反应（弹窗也点不动） | 学习通拦截：本章还有任务点未完成 | 按目录顺序改写 `chapterId` 强制跳章（`scripts/page_jump.py`） |
 
 ---
 

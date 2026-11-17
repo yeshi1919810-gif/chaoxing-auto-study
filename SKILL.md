@@ -249,6 +249,8 @@ if (nc && nc.offsetParent !== null) nc.click();
 | **倍速"回落 1x"完全不生效** | 扫描表达式在模块导入时 `.replace("SPEED", ...)` 把倍速**固化**进 JS 字符串 | 不要在 import 期替换，改成每轮 `scan_expr()` 现拼表达式 |
 | **长任务跑一会儿就没了 / 日志只有一行启动标记** | 用 `nohup ... &` 或父进程 `Popen` 起的子进程，会话结束被连带杀掉 | 改用工具托管的后台任务（`run_in_background`）直接跑脚本本体 |
 | **用 python `urllib` 请求学习通接口后账号告警** | UA / 指纹与浏览器不一致，被判成另一台终端 | 一切读写都走 CDP 在真实页面里执行，不要绕过浏览器调用接口 |
+| **`type=other` 且 isrc 是 `modules/pdf`，点"下一节"原地打转** | 章节里除了视频还有一个"本章PPT"阅读卡片，被当成未知类型 | 识别 `modules/pdf`，对 `pan-yz` 跨域帧逐帧滚到底，变绿后再推进 |
+| **章节测验没答，点"下一节"毫无反应** | 学习通拦截：本章还有任务点未完成，弹窗按钮点不动 | 按目录顺序直接 `location.href` 改成下一章 `chapterId` 强制跳章 |
 
 
 ---
@@ -357,3 +359,41 @@ def scan_expr():
   ```
 * 直播回放**播到 100% 自然结束**最稳；阈值只用来决定"何时切下一场"，别拿阈值当完成判据。
 * 切换下一门前，先确认目标课程页 `enc` 仍然有效（直接导航试一次），失效就回课程主页重点一次章节重新取。
+
+---
+
+## 章节内多卡片：PDF 与测验拦截
+
+一个章节**不止一张卡片**。实测管理学 3.1 = 视频 + 2 个"本章PPT"(PDF) + 1 个章节测验，
+只处理视频会导致循环在原地反复点"下一节"而永不前进。
+
+### 1. 识别与处理顺序
+按内层 iframe 的 src 分流：`modules/video` → `modules/pdf` → `modules/document` → `modules/work`。
+`modules/pdf` **不能**归到 `other`，否则就是死循环。
+
+### 2. PDF 在跨域帧里，必须逐帧滚
+一个章节可能有**多个** PDF 卡片，对应**多个** `pan-yz.chaoxing.com/screen/v2/file_*` 帧：
+```python
+fr = [f for f in cdp.frames() if "screen/v2/file" in (f.get("url") or "")]
+for i in range(len(fr)):
+    while True:
+        st = cdp.ev_frame("screen/v2/file", PDF_SCROLL, i)   # createIsolatedWorld + evaluate
+        if json.loads(st).get("done"): break
+        time.sleep(0.5)
+```
+实测 37 步 + 56 步滚完（两个 16k / 24k 像素长的文档），约 50s 后卡片变绿。
+
+### 3. 测验拦截：只能强制跳章
+章节测验不答（纯刷课模式）时，"下一节"按钮点了没反应，
+弹窗「当前章节还有任务点未完成」里的"下一节"**在 JS 里也点不动**（点击后 URL 不变）。
+
+可靠做法是绕过按钮，直接按目录顺序改地址：
+```python
+new = re.sub(r"chapterId=\d+", "chapterId=" + next_id, location_href)
+cdp.ev("location.href=" + json.dumps(new))
+```
+`next_id` 来自刷课前抓好的目录顺序表（`chapterId` 扁平数组），`enc` 沿用当前 URL 里的即可，
+实测同一门课跨章节复用 `enc` 有效。
+
+**判定时机**：点完"下一节"等 5s 重新扫描，若 `chapterId` 没变就计数，连续 2 次没变即强制跳章。
+现成脚本：[page_jump.py](./scripts/page_jump.py)（`--to <id>` 或 `--catalog order.json --next`）。
