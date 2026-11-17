@@ -244,4 +244,116 @@ if (nc && nc.offsetParent !== null) nc.click();
 | **鼠标移开/切窗口后视频暂停** | 心跳上报与失焦导致 `paused` | 每 3 秒巡检唤回 `play()`；长暂停（≤70s）属正常，勿切章 |
 | **最小化 / 被遮挡后播放变极慢（约 0.3x）** | Chrome 遮挡检测把页面判为 `hidden`，定时器与渲染被节流 | 启动时加 `--disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=CalculateNativeWinOcclusion`；或保持窗口可见（分屏） |
 | **想确认是否被节流** | 无直观信号 | 读 `document.visibilityState`：`visible` 正常，`hidden` 说明窗口被遮挡/最小化 |
+| **标签被强制跳到 `detect.chaoxing.com/api/monitor_temp`，提示"多终端登录"** | 同一账号同时开了**两个** `studentstudy` 章节页（哪怕只是打开来核对进度） | 只保留 1 个章节页；把跳走的标签导航回原章节即可续播，不要重新登录 |
+| **脚本一启动就 `UnboundLocalError: SPEED`** | 函数内后面对 `SPEED` 有回落赋值，Python 视为局部变量 | 在函数首行加 `global SPEED` |
+| **倍速"回落 1x"完全不生效** | 扫描表达式在模块导入时 `.replace("SPEED", ...)` 把倍速**固化**进 JS 字符串 | 不要在 import 期替换，改成每轮 `scan_expr()` 现拼表达式 |
+| **长任务跑一会儿就没了 / 日志只有一行启动标记** | 用 `nohup ... &` 或父进程 `Popen` 起的子进程，会话结束被连带杀掉 | 改用工具托管的后台任务（`run_in_background`）直接跑脚本本体 |
+| **用 python `urllib` 请求学习通接口后账号告警** | UA / 指纹与浏览器不一致，被判成另一台终端 | 一切读写都走 CDP 在真实页面里执行，不要绕过浏览器调用接口 |
 
+
+---
+
+## 阅读（PDF）与直播回放任务点
+
+### 1. 阅读 / PDF 任务点（`ananas/modules/pdf/index.html`）
+* **关键**：外层 `modules/pdf` 的 `document` 滚动**完全无效**，任务点只在真正的阅览器里累计——
+  实际帧是跨域的 `https://pan-yz.chaoxing.com/screen/v2/file_<hash>`。
+* 必须用 CDP `Page.createIsolatedWorld` 在该跨域帧内执行滚动：
+  ```javascript
+  var se = document.scrollingElement;
+  var step = Math.floor(se.clientHeight * 0.8);
+  se.scrollTop = Math.min(se.scrollHeight - se.clientHeight, se.scrollTop + step);
+  window.dispatchEvent(new Event('scroll'));
+  ```
+  每步间隔 0.5~1.2s，滚到底后 `~3s` 内该卡片会变成 `ans-job-finished`。
+* **一个小节多张同类卡片时**：frame 顺序与卡片顺序一致，用「第 N 个匹配 frame」逐个滚完即可。
+  参考实现：[pdf_scroll.js](./scripts/pdf_scroll.js) / [pdf_finish.py](./scripts/pdf_finish.py)。
+
+### 2. 直播回放任务点（`ananas/modules/live/index.html`）
+* 卡片是 `javascript:void(0)` + jQuery 绑定，`element.click()` **常常无效**（`window.open` 被浏览器拦截）。
+  → 改用 CDP 真实鼠标事件：
+  ```python
+  Input.dispatchMouseEvent(type='mousePressed'/'mouseReleased', x=..., y=..., button='left')
+  ```
+  坐标 = 顶层 `#iframe` rect + `cards` 内 live iframe rect + `.liveHref` rect 逐级相加。
+* 点击后会打开新标签 `https://zhibo.chaoxing.com/<liveId>?...`，里面是 `video`（`blob:` 源）。
+* 完成条件是**观看时长达总时长 90%**，无法快进，且提示「不要最小化/切到其他网页」。
+  参考监控脚本：[live_watch.py](./scripts/live_watch.py)（静音 + 暂停自动恢复 + 进度日志）。
+
+### 3. 循环遇到未知类型不要僵死
+`type=other` 连续停留超过 90s 应记录告警并强制推进，否则整条循环会像本次一样静默卡住数小时。
+
+---
+
+## 多终端判定：单章节页铁律（踩过坑，务必遵守）
+
+为核对"某个章节到底绿没绿"，在**第二个标签**里打开同一账号的另一个 `studentstudy` 章节页，
+会立刻触发风控页：
+
+```
+https://detect.chaoxing.com/api/monitor_temp?mes=您的账号于HH:MM在一台谷歌内核浏览器设备登入章节页面。
+多终端登录可能会被判定异常学习。如非本人操作，请尽快修改密码
+```
+
+后果：**正在播放的那个章节页会被强制跳走**，视频停住、进度不再累计（已累计的时长不会丢）。
+
+处理与规矩：
+1. **同一时刻只允许存在 1 个 `mooc1.chaoxing.com/.../studentstudy` 标签页。**
+2. 需要核对别的章节 → 等整门课刷完再核对，或直接导航当前标签（会打断播放，别在跑课时做）。
+3. 已被跳走时：把该标签**导航回原章节 URL** 即可，登录态还在，不用重新扫码；循环脚本会自己重连并续播。
+4. 顺手把多余的 `zhibo.chaoxing.com`、`detect` 标签关掉，用 `curl http://127.0.0.1:9222/json/close/<id>`。
+5. 不要用 python 直接 `urllib` 请求 `mooc1` 接口去"只读查询"状态——UA/指纹不同，一样算另一终端。
+
+---
+
+## 倍速的两个隐藏坑
+
+### 1. `global` 缺失会直接崩
+```python
+SPEED = float(os.environ.get("SPEED", "2.0"))
+
+def main():
+    global SPEED            # ← 少了这行，下面一赋值 SPEED 就变局部变量
+    log(f"start SPEED={SPEED}")   # UnboundLocalError
+    ...
+    SPEED = 1.0             # 回落
+```
+
+### 2. 别在 import 期把倍速拼进 JS
+```python
+SCAN = """... v.playbackRate = SPEED ...""".replace("SPEED", str(SPEED))   # ❌ 固化，运行期改不动
+```
+正确做法是保留占位符，每轮现拼：
+```python
+def scan_expr():
+    return SCAN.replace("SPEED", str(SPEED))
+```
+这样"连续被重置 → 回落 1.0"才真正落到页面上。
+
+---
+
+## 长任务保活
+
+| 启动方式 | 结果 |
+| :--- | :--- |
+| `nohup python loop.py &` | ❌ 会话结束即被杀，日志只剩一行启动标记 |
+| 父脚本 `subprocess.Popen(...)` | ❌ 父进程退出时子进程被连带清理 |
+| 工具托管后台任务（`run_in_background`） | ✅ 实测连续跑 2 小时无中断 |
+
+推论：**不要在自动化脚本里再套一层"启动器"**。接力逻辑可以写成"等条件满足 → 打印下一步该做什么"，
+真正的长跑进程由外部托管直接拉起。
+
+---
+
+## 多课程串行接力
+
+一门课的最后任务是直播回放（几十分钟且不能快进）时，可以写个链式监控，避免人工守着切课：
+
+* [live_chain.py](./scripts/live_chain.py)：监控第 1 场到阈值（默认 95%）→ 导航学习页到第 2 节 →
+  真实鼠标点击 `.liveHref` → 继续监控第 2 场 → 打印 `ALL LECTURES DONE`。
+  ```bash
+  python live_chain.py --live1 5000268572614308 --chapter2 1272997990 \
+      --course 265744998 --clazz 151099250 --enc <enc>
+  ```
+* 直播回放**播到 100% 自然结束**最稳；阈值只用来决定"何时切下一场"，别拿阈值当完成判据。
+* 切换下一门前，先确认目标课程页 `enc` 仍然有效（直接导航试一次），失效就回课程主页重点一次章节重新取。

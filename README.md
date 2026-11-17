@@ -157,11 +157,24 @@ chaoxing-auto-study/
 ├── scripts/
 │   ├── auto_loop_cdp.py          # ⭐ 单进程全自动循环（推荐）
 │   ├── auto_runner.js            # Node 批量遍历版（目录清单驱动）
+│   ├── live_chain.py             # 直播回放接力：第 1 场到阈值 → 点开第 2 场 → 继续监控
+│   ├── live_watch.py             # 直播回放看护：静音 + 暂停唤回 + 进度日志
+│   ├── pdf_finish.py             # 阅读(PDF)任务点：跨域阅览器滚到底
+│   ├── pdf_scroll.js             # 上者的裸 JS 版本，便于 CDP 单步调试
 │   ├── keep_awake.ps1            # 防熄屏
 │   └── launch_browser.cmd        # 带调试端口启动浏览器
 └── references/
     └── chaoxing_internals.md     # 超星页面结构 / 接口内部细节速查
 ```
+
+### 覆盖的任务点类型
+
+| 类型 | 内层 frame | 完成判据 | 脚本支持 |
+| :--- | :--- | :--- | :--- |
+| 视频 | `ananas/modules/video` | `.ans-job-finished` | ✅ 全自动 |
+| 课件 / PDF | `ananas/modules/document` / `pdf` | 同上（需真实滚动） | ✅ 跨域滚到底 |
+| 直播回放 | `ananas/modules/live` | 观看时长 ≥ 90%（不可快进） | ✅ 接力 + 看护 |
+| 章节测验 / 作业 | `modules/work` | — | ⏭ 纯刷课模式跳过 |
 
 ---
 
@@ -183,6 +196,10 @@ chaoxing-auto-study/
 | 10 | CDP 注入的守卫没生效 | 隔离世界（isolated world）执行，断开连接即销毁 | 从顶层同源主世界穿透注入 |
 | 11 | 最小化 / 被遮挡后播放变得极慢 | Chrome 的遮挡检测（`CalculateNativeWinOcclusion`）把页面判为 `hidden`，定时器与渲染被节流 | 启动加 4 个 `--disable-*` 参数；或让窗口保持可见（分屏而不是最小化） |
 | 12 | 不知道有没有被节流 | 没有直观信号 | 读 `document.visibilityState`：`visible` 正常，`hidden` 说明被遮挡 |
+| 13 | 标签被强制跳到 `detect.chaoxing.com`，提示"多终端登录" | 同一账号**同时开了两个 `studentstudy` 章节页**（哪怕只是打开来核对进度） | 只留 1 个章节页；被跳走后导航回原 URL 即可续播，不用重新登录 |
+| 14 | 脚本一启动就 `UnboundLocalError: SPEED` | 函数内后面对 `SPEED` 有回落赋值 → 被当成局部变量 | 首行加 `global SPEED` |
+| 15 | "倍速回落 1x"完全不生效 | 扫描表达式在 import 期 `.replace()` 把倍速**固化**进 JS | 改成每轮现拼 `scan_expr()` |
+| 16 | 长任务跑一会儿就消失，日志只剩一行启动标记 | `nohup ... &` / 父进程 `Popen` 起的进程随会话结束被连带杀掉 | 用外部托管的常驻方式直接跑脚本本体，别套"启动器" |
 
 ---
 
