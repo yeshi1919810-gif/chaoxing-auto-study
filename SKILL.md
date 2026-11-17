@@ -385,7 +385,27 @@ while time.time() < deadline:
 ```
 `sleep(9)` 死等改成轮询后，每次跳章省 4-5 秒；两者合计每次挡章少耗约 15 秒。
 
+### 末章必须写退出条件（否则永远空转）
+
+跳到最后一节后，如果这节还挂着没答的测验，`force_next` 会返回 `False`（"already at last chapter"），
+而调用方只关心"跳没跳"，于是下一轮又重新判定 quiz → 又调 `force_next` → 又失败……
+
+实测在末节这样空转了 **2 小时 41 分**（每 11 秒一轮，约 870 次无效请求），日志刷满却什么都没干。
+正确写法是把失败当终止信号：
+
+```python
+if stuck >= 1:
+    log("quiz blocks chapter -> force jump")
+    if not force_next(cdp, kid) and CATALOG and str(kid) == CATALOG[-1]:
+        log("COURSE DONE: 末章已到，只剩未答的测验 -> 退出")
+        return           # 直接结束主循环，别在最后一节打转
+    stuck = 0
+```
+
+判据：**末节 + 有测验 + 视频已绿** 就是这门课在「不答测验」前提下的终态，该退出而不是重试。
+
 ---
+
 
 ## 长任务保活
 
