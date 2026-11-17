@@ -308,7 +308,7 @@ https://detect.chaoxing.com/api/monitor_temp?mes=您的账号于HH:MM在一台�
 
 ---
 
-## 倍速的两个隐藏坑
+## 倍速的四个隐藏坑
 
 ### 1. `global` 缺失会直接崩
 ```python
@@ -331,6 +331,59 @@ def scan_expr():
     return SCAN.replace("SPEED", str(SPEED))
 ```
 这样"连续被重置 → 回落 1.0"才真正落到页面上。
+
+### 3. 倍速上限是播放器决定的，`video.js` 只到 2x
+
+超星的视频播放器是 **video.js**，播控条上有 `.vjs-playback-rate` 菜单，选项写死：
+`0.75x / 1x / 1.25x / 1.5x / 2x`——**没有 3x、4x**。
+
+坑在于**即时读回会骗人**：
+```js
+v.playbackRate = 3;   // 同一 tick 读 v.playbackRate → 返回 3，看着"成功了"
+// 下一帧 video.js 的 ratechange 监听把它拽回去，实际落在 1 或 2
+```
+正确判定方式必须**等 3 秒再读一次**：
+```python
+cdp.ev("...v.playbackRate=3; return 'ok'")
+time.sleep(3)
+print(cdp.ev("...return v.playbackRate"))   # 这一枪才是真实值
+```
+
+实测三种设法的结果：
+
+| 设法 | 结果 |
+| :--- | :--- |
+| `v.playbackRate = 3` / `= 4` | ❌ 即时读回 3/4，3 秒后回落 1，且 1↔2 抖动，等效约 1.5x |
+| `player.playbackRate(2)`（video.js API） | ❌ 返回 1，被 clamp（`playbackRates()` 为空、`options_.playbackRates` 才是 `[0.75,1,1.25,1.5,2]`） |
+| **`SPEED=2.0` 让扫描表达式每轮强设 2** | ✅ 稳定 2x，每 3 秒推进 6 秒，可连续跑几小时 |
+
+结论：**别碰 3x/4x，2.0 就是天花板**。另外注意个别章节会整体禁倍速（菜单点了没反应、rate 恒为 1），
+这种章节等它 1x 播完即可，下一章 `speed_tried` 会重新试探回 2x，不要中途改代码。
+
+---
+
+## 章节测验：别重试，第一次就跳
+
+`modules/work` 类型的章节是**章节测验**，不答题时"下一节"和弹窗按钮全部无效。
+早期写法是判两次才 `force_next`，每次白等 10 秒以上。正确做法是**第一次跳不出去就改 URL**：
+
+```python
+if str(cur.get("chapterId")) == str(kid):
+    log("quiz blocks chapter -> force jump")
+    force_next(cdp, kid)      # 不再 stuck>=2 重试
+```
+
+配合"落地轮询"，跳章也比死等快：
+```python
+cdp.ev("location.href=" + json.dumps(new))
+deadline = time.time() + 16
+while time.time() < deadline:
+    time.sleep(1.2)
+    cur2 = cdp.ev(r"(function(){var m=location.href.match(/chapterId=(\d+)/);return m?m[1]:'';})()")
+    if cur2 and str(cur2) != str(cur):   # 切到就走，通常在 8-11s
+        return True
+```
+`sleep(9)` 死等改成轮询后，每次跳章省 4-5 秒；两者合计每次挡章少耗约 15 秒。
 
 ---
 
